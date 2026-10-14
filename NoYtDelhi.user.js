@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Classic (Pre-2025) Controls
 // @namespace    https://github.com/Gameknight963
-// @version      1.1.0
+// @version      1.2.0
 // @description  Restores the classic player layout and icons using the live DOM, without experiment flags.
 // @match        https://www.youtube.com/*
 // @match        https://www.youtube-nocookie.com/embed/*
@@ -17,6 +17,8 @@
     restoreControls: true,
     classicControlIcons: true, // Requires restoreControls
     redProgress: true,
+    classicSeekbar: true, // Thin track and classic scrubber/hover styling.
+    classicSeekPreview: true, // Smaller thumbnail with plain text underneath.
     classicAutoplay: true,
     classicBottomGradient: true, // Dark fade from the bottom of controls
     classicPlaybackFeedback: true, // The thing which appears when you click the screen
@@ -27,6 +29,11 @@
 
   // Optional visual tuning. Usually these can be left alone.
   const ADVANCED = Object.freeze({
+    seekbarIdleHeight: 3,
+    seekbarHoverHeight: 5,
+    seekbarChapterHoverScale: 1.8, // Extra expansion for the chapter under the pointer.
+    seekbarScrubberSize: 13,
+    seekPreviewWidth: 160, // Large-player mode scales this by 1.5.
     seekBackgroundOpacity: 0.4, // 0 = transparent, 1 = solid black
     seekCircleSize: 110, // Classic desktop diameter in CSS pixels (reference screenshot is scaled)
     seekSideInsetPercent: 15, // Circle centers, measured from the left/right edge
@@ -199,7 +206,7 @@
       display:none!important;
     }
     .html5-video-player[data-oldyt-dom] .ytp-progress-bar-container {
-      bottom:calc(var(--oldyt-height) - 1px)!important; height:5px!important;
+      bottom:calc(var(--oldyt-height) - 1px)!important;
     }
     .html5-video-player[data-oldyt-dom] .ytp-play-progress,
     .html5-video-player[data-oldyt-dom] .ytp-scrubber-button {
@@ -242,7 +249,7 @@
   `;
   const style = document.createElement('style');
   style.id = STYLE_ID;
-  style.textContent = configuredControlCSS(css) + feedbackCSS();
+  style.textContent = configuredControlCSS(css) + feedbackCSS() + seekbarCSS();
   (document.head || document.documentElement).append(style);
 
   const players = new Map();
@@ -260,6 +267,110 @@
       if (selectors.includes('.ytp-autonav-toggle-button')) feature = 'autoplay';
       return selectors.replaceAll('[data-oldyt-dom]', `[data-oldyt-${feature}]`) + '{' + body + '}';
     });
+  }
+  function seekbarCSS() {
+    const hover = Math.max(1, Number(ADVANCED.seekbarHoverHeight) || 5);
+    const idle = Math.min(hover, Math.max(1, Number(ADVANCED.seekbarIdleHeight) || 3));
+    const dot = Math.max(4, Number(ADVANCED.seekbarScrubberSize) || 13);
+    const chapterScale = Math.max(1, Number(ADVANCED.seekbarChapterHoverScale) || 1.8);
+    return `
+      .html5-video-player[data-oldyt-seekbar] {--oldyt-track-height:${hover}px;--oldyt-dot:${dot}px;--oldyt-track-scale:${idle / hover};}
+      .html5-video-player[data-oldyt-seekbar].ytp-big-mode {--oldyt-track-height:${hover * 1.6}px;--oldyt-dot:${dot * 20 / 13}px;--oldyt-track-scale:${idle / hover * 25 / 24};}
+      .html5-video-player[data-oldyt-seekbar] .ytp-progress-bar-container {height:var(--oldyt-track-height)!important;}
+      .html5-video-player[data-oldyt-seekbar] .ytp-progress-list {
+        background:rgba(255,255,255,.2)!important;background-blend-mode:normal!important;
+        overflow:visible!important;border-radius:0!important;transform:scaleY(var(--oldyt-track-scale))!important;
+        transition:transform .1s cubic-bezier(.4,0,1,1)!important;
+      }
+      .html5-video-player[data-oldyt-seekbar] .ytp-progress-bar-container:hover:not([aria-disabled=true]) .ytp-progress-list,
+      .html5-video-player[data-oldyt-seekbar] .ytp-drag .ytp-progress-list,
+      .html5-video-player[data-oldyt-seekbar].ytp-touch-mode .ytp-progress-list {transform:none!important;}
+      .html5-video-player[data-oldyt-seekbar] .ytp-exp-chapter-hover-container:hover,
+      .html5-video-player[data-oldyt-seekbar] .ytp-progress-bar-container:hover:not([aria-disabled=true]) .ytp-exp-chapter-hover-effect,
+      .html5-video-player[data-oldyt-seekbar] .ytp-drag .ytp-exp-chapter-hover-effect,
+      .html5-video-player[data-oldyt-seekbar] .ytp-progress-bar-container:hover:not([aria-disabled=true]).ytp-timed-markers-enabled .ytp-progress-list {
+        transform:scaleY(${chapterScale})!important;
+      }
+      .html5-video-player[data-oldyt-seekbar] .ytp-scrubber-container:not(.ytp-decorated-scrubber-container) {
+        top:calc((var(--oldyt-track-height) - var(--oldyt-dot)) / 2)!important;left:calc(var(--oldyt-dot) / -2)!important;
+      }
+      .html5-video-player[data-oldyt-seekbar] .ytp-scrubber-container:not(.ytp-decorated-scrubber-container) .ytp-scrubber-button {
+        width:var(--oldyt-dot)!important;height:var(--oldyt-dot)!important;border-radius:50%!important;
+        transform:none!important;transition:transform .1s cubic-bezier(.4,0,1,1)!important;
+      }
+      .html5-video-player[data-oldyt-seekbar] .ytp-scrubber-button.ytp-hide-scrubber-button {transform:scale(0)!important;}
+      .html5-video-player[data-oldyt-seekbar] .ytp-progress-bar-container:hover:not([aria-disabled=true]) .ytp-scrubber-button,
+      .html5-video-player[data-oldyt-seekbar] .ytp-drag .ytp-scrubber-button {transform:none!important;}
+      .html5-video-player[data-oldyt-seekbar] .ytp-progress-bar-container:hover .ytp-timed-markers-container {transform:none!important;}
+      .html5-video-player[data-oldyt-preview] .ytp-tooltip[data-oldyt-preview-size] {
+        top:auto!important;bottom:calc(var(--oldyt-preview-bar-bottom,48px) + 48px)!important;
+        padding:2px!important;border-radius:8px!important;background:#fff!important;
+        backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+      }
+      .html5-video-player[data-oldyt-preview] .ytp-tooltip[data-oldyt-preview-size] .ytp-tooltip-bg {
+        width:var(--oldyt-preview-width)!important;height:var(--oldyt-preview-height)!important;
+        background-size:var(--oldyt-preview-bg-size)!important;background-position:var(--oldyt-preview-bg-position)!important;
+        border-radius:8px!important;margin:0!important;
+      }
+      .html5-video-player[data-oldyt-preview] .ytp-tooltip[data-oldyt-preview-size] .ytp-tooltip-text-wrapper {
+        width:100%!important;bottom:0!important;background:transparent!important;
+        backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+      }
+      .html5-video-player[data-oldyt-preview] .ytp-tooltip[data-oldyt-preview-size] .ytp-tooltip-progress-bar-pill,
+      .html5-video-player[data-oldyt-preview] .ytp-tooltip[data-oldyt-preview-size] .ytp-tooltip-bottom-text,
+      .html5-video-player[data-oldyt-preview] .ytp-tooltip[data-oldyt-preview-size] .ytp-tooltip-title {display:none!important;}
+      .html5-video-player[data-oldyt-preview] .ytp-tooltip[data-oldyt-preview-size] .ytp-tooltip-edu {
+        bottom:calc(var(--oldyt-preview-height) + 5px)!important;
+      }
+      .html5-video-player[data-oldyt-preview] .oldyt-preview-caption {
+        position:absolute;top:calc(100% + 8px);left:-50%;width:200%;text-align:center;
+        font:500 13px/16px Arial,sans-serif;color:#fff;text-shadow:0 0 4px rgba(0,0,0,.75);
+      }
+      .html5-video-player[data-oldyt-preview] .oldyt-preview-caption > div {
+        overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+      }
+      .html5-video-player[data-oldyt-preview] .oldyt-preview-caption > div:empty {display:none;}
+    `;
+  }
+  function restoreSeekPreview(player) {
+    mark(player, 'seekbar', CONFIG.classicSeekbar);
+    mark(player, 'preview', CONFIG.classicSeekPreview);
+    if (!CONFIG.classicSeekPreview) return;
+    for (const tooltip of player.querySelectorAll('.ytp-tooltip')) {
+      const bg = tooltip.querySelector('.ytp-tooltip-bg');
+      const nativeWidth = parseFloat(bg?.style.width);
+      const nativeHeight = parseFloat(bg?.style.height);
+      const size = bg?.style.backgroundSize.match(/^([\d.]+)px\s+([\d.]+)px$/);
+      const position = bg?.style.backgroundPosition.match(/^(-?[\d.]+)px\s+(-?[\d.]+)px$/);
+      const isSeek = tooltip.matches('.ytp-preview:not(.ytp-text-detail)') &&
+        !player.matches('.ytp-player-minimized,.ytp-inline-preview-mode') && nativeWidth > 0 && nativeHeight > 0 && size;
+      mark(tooltip, 'preview-size', isSeek);
+      if (!isSeek) { tooltip.querySelector('.oldyt-preview-caption')?.remove(); continue; }
+      const width = Math.max(80, Number(ADVANCED.seekPreviewWidth) || 160) * (player.classList.contains('ytp-big-mode') ? 1.5 : 1);
+      const ratio = width / nativeWidth;
+      const height = nativeHeight * ratio;
+      const bar = player.querySelector('.ytp-progress-bar-container');
+      const bottom = bar ? parseFloat(getComputedStyle(bar).bottom) : 48;
+      const vars = {
+        '--oldyt-preview-width': `${width}px`, '--oldyt-preview-height': `${height}px`,
+        '--oldyt-preview-bg-size': `${Number(size[1]) * ratio}px ${Number(size[2]) * ratio}px`,
+        '--oldyt-preview-bg-position': position ? `${Number(position[1]) * ratio}px ${Number(position[2]) * ratio}px` : bg.style.backgroundPosition || '0px 0px',
+        '--oldyt-preview-bar-bottom': `${Number.isFinite(bottom) ? bottom : 48}px`,
+      };
+      for (const [name, value] of Object.entries(vars)) {
+        if (tooltip.style.getPropertyValue(name) !== value) tooltip.style.setProperty(name, value);
+      }
+      let caption = tooltip.querySelector(':scope > .oldyt-preview-caption');
+      if (!caption) {
+        caption = document.createElement('div'); caption.className = 'oldyt-preview-caption';
+        caption.setAttribute('aria-hidden', 'true'); caption.append(document.createElement('div'), document.createElement('div'));
+        tooltip.append(caption);
+      }
+      const title = tooltip.querySelector('.ytp-tooltip-progress-bar-pill-title')?.textContent || tooltip.querySelector('.ytp-tooltip-title > span')?.textContent || '';
+      const time = tooltip.querySelector('.ytp-tooltip-progress-bar-pill-time-stamp')?.textContent || tooltip.querySelector('.ytp-tooltip-text')?.textContent || '';
+      if (caption.children[0].textContent !== title) caption.children[0].textContent = title;
+      if (caption.children[1].textContent !== time) caption.children[1].textContent = time;
+    }
   }
   function feedbackCSS() {
     const duration = Math.max(100, Number(ADVANCED.feedbackDurationMs) || 500);
@@ -448,6 +559,7 @@
     mark(player, 'red-progress', CONFIG.redProgress);
     mark(player, 'autoplay', CONFIG.classicAutoplay);
     mark(player, 'gradient', CONFIG.classicBottomGradient);
+    restoreSeekPreview(player);
     const bottom = player.querySelector('.ytp-chrome-bottom');
     if (!bottom || !CONFIG.restoreControls) return;
     const left = bottom.querySelector('.ytp-left-controls');
@@ -483,13 +595,14 @@
     };
     const observer = new MutationObserver(records => {
       // Ignore progress/time updates; react to controls being rebuilt or state changing.
-      if (records.some(r => r.type === 'attributes' ||
-        (r.type === 'characterData' && r.target.parentElement?.closest('.ytp-seek-overlay-duration')) ||
+      if (records.some(r => (r.type === 'attributes' && (r.attributeName !== 'style' || r.target.closest('.ytp-tooltip'))) ||
+        (r.type === 'characterData' && r.target.parentElement?.closest('.ytp-seek-overlay-duration,.ytp-tooltip')) ||
         (r.type === 'childList' && r.target.matches?.('.ytp-seek-overlay-duration')) ||
+        (r.type === 'childList' && r.target.closest?.('.ytp-tooltip') && !r.target.closest('.oldyt-preview-caption')) ||
         [...r.addedNodes, ...r.removedNodes].some(n => n.nodeType === 1))) schedule();
     });
     observer.observe(player, { childList:true, characterData:true, subtree:true, attributes:true,
-      attributeFilter:['class', 'aria-valuenow', 'aria-pressed', 'aria-label', 'd'] });
+      attributeFilter:['class', 'aria-valuenow', 'aria-pressed', 'aria-label', 'd', 'style'] });
     const events = ['play', 'pause', 'ended', 'volumechange', 'loadedmetadata', 'emptied'];
     events.forEach(name => player.addEventListener(name, schedule, true));
     players.set(player, { observer, schedule, events });

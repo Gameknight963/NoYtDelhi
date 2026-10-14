@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Classic (Pre-2025) Controls
 // @namespace    https://github.com/Gameknight963
-// @version      1.0.0
+// @version      1.1.0
 // @description  Restores the classic player layout and icons using the live DOM, without experiment flags.
 // @match        https://www.youtube.com/*
 // @match        https://www.youtube-nocookie.com/embed/*
@@ -12,6 +12,28 @@
 
 (() => {
   'use strict';
+  // Reload for changes
+  const CONFIG = Object.freeze({
+    restoreControls: true,
+    classicControlIcons: true, // Requires restoreControls
+    redProgress: true,
+    classicAutoplay: true,
+    classicBottomGradient: true, // Dark fade from the bottom of controls
+    classicPlaybackFeedback: true, // The thing which appears when you click the screen
+    classicSeekFeedback: true, // The thing which appears when you press the arrows
+    seekStyle: 'arrows', // Options: 'arrows' - classic three-arrow circle, 'native' - current one
+    showSeekSeconds: true,
+  });
+
+  // Optional visual tuning. Usually these can be left alone.
+  const ADVANCED = Object.freeze({
+    seekBackgroundOpacity: 0.4, // 0 = transparent, 1 = solid black
+    seekCircleSize: 110, // Classic desktop diameter in CSS pixels (reference screenshot is scaled)
+    seekSideInsetPercent: 15, // Circle centers, measured from the left/right edge
+    seekSecondsLabel: 'seconds', // Used when the native overlay only supplies a number
+    feedbackDurationMs: 500, // Central bezel; seek overlays retain YouTube's native timing
+    feedbackScale: 2,
+  });
   const STYLE_ID = 'oldyt-dom-style';
   if (document.getElementById(STYLE_ID)) return;
 
@@ -220,10 +242,190 @@
   `;
   const style = document.createElement('style');
   style.id = STYLE_ID;
-  style.textContent = css;
+  style.textContent = configuredControlCSS(css) + feedbackCSS();
   (document.head || document.documentElement).append(style);
 
   const players = new Map();
+  function mark(player, name, enabled, value = '') {
+    const attr = `data-oldyt-${name}`;
+    if (enabled && player.getAttribute(attr) !== value) player.setAttribute(attr, value);
+    else if (!enabled && player.hasAttribute(attr)) player.removeAttribute(attr);
+  }
+  function configuredControlCSS(source) {
+    // Retarget whole rule groups so each option also works without the control layout.
+    return source.replace(/([^{}]+)\{([^{}]*)\}/g, (rule, selectors, body) => {
+      let feature = 'controls';
+      if (selectors.includes('.ytp-play-progress') || selectors.includes('.ytp-scrubber-button')) feature = 'red-progress';
+      if (selectors.includes('.ytp-gradient-bottom')) feature = 'gradient';
+      if (selectors.includes('.ytp-autonav-toggle-button')) feature = 'autoplay';
+      return selectors.replaceAll('[data-oldyt-dom]', `[data-oldyt-${feature}]`) + '{' + body + '}';
+    });
+  }
+  function feedbackCSS() {
+    const duration = Math.max(100, Number(ADVANCED.feedbackDurationMs) || 500);
+    const scale = Math.max(1, Number(ADVANCED.feedbackScale) || 2);
+    const seekSize = Math.max(64, Number(ADVANCED.seekCircleSize) || 110);
+    const seekInset = Math.min(40, Math.max(5, Number(ADVANCED.seekSideInsetPercent) || 15));
+    const opacity = Number(ADVANCED.seekBackgroundOpacity);
+    const seekOpacity = Number.isFinite(opacity) ? Math.min(1, Math.max(0, opacity)) : 0.4;
+    return `
+      @keyframes oldyt-feedback-fade {from {opacity:1;transform:scale(1)} to {opacity:0;transform:scale(${scale})}}
+      .html5-video-player[data-oldyt-playback] .ytp-bezel {
+        width:52px!important;height:52px!important;margin-left:-26px!important;margin-top:-26px!important;
+        background:rgba(0,0,0,.5)!important;border-radius:50%!important;
+        backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+        animation:oldyt-feedback-fade ${duration}ms linear forwards!important;
+      }
+      .html5-video-player[data-oldyt-playback].ytp-big-mode .ytp-bezel {
+        width:78px!important;height:78px!important;margin-left:-39px!important;margin-top:-39px!important;
+      }
+      .html5-video-player[data-oldyt-playback] .ytp-bezel-icon {
+        position:relative!important;width:40px!important;height:40px!important;margin:6px!important;
+      }
+      .html5-video-player[data-oldyt-playback].ytp-big-mode .ytp-bezel-icon {
+        width:54px!important;height:54px!important;margin:12px!important;
+      }
+      .html5-video-player[data-oldyt-playback] .ytp-bezel-icon[data-oldyt-icon] > svg {opacity:0!important;}
+      .html5-video-player[data-oldyt-playback] .ytp-bezel-icon .oldyt-classic-icon {
+        position:absolute!important;inset:0!important;pointer-events:none!important;
+      }
+      .html5-video-player[data-oldyt-playback] .ytp-bezel-icon .oldyt-classic-svg {
+        width:100%!important;height:100%!important;fill:#fff!important;
+      }
+      .html5-video-player[data-oldyt-playback] .ytp-bezel-text-wrapper {animation:none!important;}
+      .html5-video-player[data-oldyt-playback] .ytp-bezel-text {
+        background:rgba(0,0,0,.5)!important;border-radius:3px!important;
+        backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+        padding:10px 20px!important;font-size:175%!important;
+      }
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-seek-overlay-duration {
+        display:none!important;
+      }
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-seek-overlay-arrow {display:none!important;}
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-seek-overlay-animation {
+        width:${seekSize}px!important;height:${seekSize}px!important;box-sizing:border-box!important;
+        border-radius:50%!important;background:rgba(0,0,0,${seekOpacity})!important;
+        flex-direction:column!important;justify-content:center!important;gap:8px!important;
+        align-items:center!important;padding:0!important;margin:0!important;
+        top:50%!important;transform:translateY(-50%)!important;
+        text-align:center!important;pointer-events:none!important;
+      }
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-seek-overlay-animation-back {left:max(8px,calc(${seekInset}% - ${seekSize / 2}px))!important;right:auto!important;}
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-seek-overlay-animation-forward {right:max(8px,calc(${seekInset}% - ${seekSize / 2}px))!important;left:auto!important;}
+      .html5-video-player[data-oldyt-seek] .oldyt-seek-circle {
+        width:53px;height:14px;display:flex;align-items:center;justify-content:center;
+        flex:0 0 14px;margin:0;padding:0;pointer-events:none;order:-1;
+      }
+      .html5-video-player[data-oldyt-seek] .oldyt-seek-circle svg {display:block;width:53px;height:14px;fill:#ddd;}
+      .html5-video-player[data-oldyt-seek] .oldyt-seek-circle path {animation:oldyt-arrow-pulse 1.2s linear infinite;}
+      .html5-video-player[data-oldyt-seek] .oldyt-seek-circle path:nth-child(2) {animation-delay:200ms;}
+      .html5-video-player[data-oldyt-seek] .oldyt-seek-circle path:nth-child(3) {animation-delay:400ms;}
+      @keyframes oldyt-arrow-pulse {0%,100% {opacity:0} 17% {opacity:.9} 33% {opacity:.6} 50%,67%,83% {opacity:.3}}
+      .html5-video-player[data-oldyt-seek] .oldyt-seek-label {
+        color:#ddd;font:500 12px/14px Arial,sans-serif;text-shadow:none;white-space:nowrap;
+        display:block;position:static;margin:0;padding:0;text-align:center;
+        transform:none;flex:0 0 auto;
+      }
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-doubletap-ripple {display:none!important;}
+      /* Center the legacy circle and its content on the same coordinates.
+         Only time-seeking is restyled; chapter navigation retains its native layout. */
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-time-seeking .ytp-doubletap-static-circle {
+        display:block!important;width:${seekSize}px!important;height:${seekSize}px!important;
+        background:rgba(0,0,0,${seekOpacity})!important;top:50%!important;
+        transform:translate(-50%,-50%)!important;margin:0!important;right:auto!important;
+      }
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-time-seeking .ytp-doubletap-seek-info-container {
+        position:absolute!important;top:50%!important;right:auto!important;
+        width:${seekSize}px!important;height:${seekSize}px!important;
+        transform:translate(-50%,-50%)!important;margin:0!important;padding:0!important;
+        display:flex!important;flex-direction:column!important;justify-content:center!important;align-items:center!important;
+        gap:8px!important;text-align:center!important;line-height:14px!important;
+      }
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-time-seeking[data-side=back] .ytp-doubletap-static-circle,
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-time-seeking[data-side=back] .ytp-doubletap-seek-info-container {
+        left:max(${seekSize / 2 + 8}px,${seekInset}%)!important;
+      }
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-time-seeking[data-side=forward] .ytp-doubletap-static-circle,
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-time-seeking[data-side=forward] .ytp-doubletap-seek-info-container {
+        left:min(calc(100% - ${seekSize / 2 + 8}px),${100 - seekInset}%)!important;
+      }
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-time-seeking .ytp-doubletap-arrows-container {
+        width:63px!important;height:14px!important;display:flex!important;align-items:center!important;
+        flex:0 0 14px!important;margin:0!important;padding:0!important;
+      }
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-time-seeking[data-side=forward] .ytp-doubletap-arrows-container {transform:translateX(5px)!important;}
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-time-seeking[data-side=back] .ytp-doubletap-arrows-container {transform:translateX(-5px)!important;}
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-time-seeking .ytp-doubletap-tooltip,
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-time-seeking .ytp-doubletap-tooltip-label {
+        margin:0!important;padding:0!important;text-align:center!important;font:500 12px/14px Arial,sans-serif!important;
+      }
+      .html5-video-player[data-oldyt-seek=arrows] .ytp-doubletap-base-arrow {
+        border:10px solid transparent!important;border-top-width:7px!important;border-bottom-width:7px!important;
+      }
+      .html5-video-player[data-oldyt-seek=arrows] [data-side=forward] .ytp-doubletap-base-arrow {border-left:11px solid #ddd!important;}
+      .html5-video-player[data-oldyt-seek=arrows] [data-side=back] .ytp-doubletap-base-arrow {border-right:11px solid #ddd!important;}
+      .html5-video-player[data-oldyt-seek-seconds=off] .oldyt-seek-label,
+      .html5-video-player[data-oldyt-seek-seconds=off] .ytp-seek-overlay-duration,
+      .html5-video-player[data-oldyt-seek-seconds=off] .ytp-doubletap-tooltip-label {display:none!important;}
+      @media (prefers-reduced-motion:reduce) {
+        .html5-video-player[data-oldyt-playback] .ytp-bezel {animation:oldyt-feedback-opacity ${duration}ms linear forwards!important;}
+        .html5-video-player[data-oldyt-seek] .oldyt-seek-circle path {animation:none!important;}
+      }
+      @keyframes oldyt-feedback-opacity {from {opacity:1} to {opacity:0}}
+    `;
+  }
+  function restoreFeedback(player) {
+    mark(player, 'playback', CONFIG.classicPlaybackFeedback);
+    mark(player, 'seek', CONFIG.classicSeekFeedback, CONFIG.seekStyle === 'native' ? 'native' : 'arrows');
+    mark(player, 'seek-seconds', CONFIG.classicSeekFeedback, CONFIG.showSeekSeconds ? 'on' : 'off');
+    if (CONFIG.classicPlaybackFeedback) {
+      for (const bezel of player.querySelectorAll('.ytp-bezel')) {
+        const target = bezel.querySelector('.ytp-bezel-icon');
+        const native = target?.querySelector(':scope > svg');
+        if (!native) continue;
+        const path = native.querySelector('path')?.getAttribute('d') || '';
+        const label = (bezel.getAttribute('aria-label') || '').toLowerCase();
+        // Shape checks cover supplied SVGs without relying on the UI language.
+        let key = /12\.75\s+4\.5|M\s*12,26\s+16,26/.test(path) ? 'pause' :
+          /17\s+8\.6|M\s*12,26\s+18\.5,22/.test(path) ? 'play' : null;
+        if (!key && /^(play|pause|replay)$/.test(label)) key = label;
+        if (!key && native.querySelector('.ytp-svg-volume-animation-speaker')) {
+          const video = player.querySelector('video');
+          key = video?.muted || video?.volume === 0 ? 'muted' : 'volume';
+        }
+        if (key) setIcon(target, key);
+        else if (target.hasAttribute('data-oldyt-icon')) {
+          // Unknown feedback (e.g. speed): keep the native icon visible.
+          target.removeAttribute('data-oldyt-icon');
+          target.querySelector(':scope > .oldyt-classic-icon')?.remove();
+        }
+      }
+    }
+    if (CONFIG.classicSeekFeedback && CONFIG.seekStyle !== 'native') {
+      for (const overlay of player.querySelectorAll('.ytp-seek-overlay-animation')) {
+        if (!overlay.querySelector(':scope > .oldyt-seek-circle')) {
+          const circle = document.createElement('span');
+          circle.className = 'oldyt-seek-circle';
+          circle.setAttribute('aria-hidden', 'true');
+          const forward = overlay.classList.contains('ytp-seek-overlay-animation-forward');
+          circle.innerHTML = `<svg viewBox="0 0 53 14" focusable="false"><g${forward ? '' : ' transform="translate(53 0) scale(-1 1)"'}><path d="M0 0l11 7-11 7z"/><path d="M21 0l11 7-11 7z"/><path d="M42 0l11 7-11 7z"/></g></svg>`;
+          overlay.append(circle);
+        }
+        let label = overlay.querySelector(':scope > .oldyt-seek-label');
+        if (!label) {
+          label = document.createElement('span');
+          label.className = 'oldyt-seek-label';
+          label.setAttribute('aria-hidden', 'true');
+          overlay.append(label);
+        }
+        // Mirror native accumulated time; never change YouTube's own bound text node.
+        const nativeText = overlay.querySelector('.ytp-seek-overlay-duration')?.textContent.trim() || '';
+        const number = nativeText.match(/^[+\-\u2212]?\s*(\d+(?:[.,]\d+)?)$/);
+        const text = number ? `${number[1]} ${ADVANCED.seekSecondsLabel}` : nativeText;
+        if (label.textContent !== text) label.textContent = text;
+      }
+    }
+  }
   function setIcon(button, key) {
     if (!button || !ICONS[key]) return;
     let icon = button.querySelector(':scope > .oldyt-classic-icon');
@@ -241,14 +443,19 @@
   }
 
   function restore(player) {
+    restoreFeedback(player);
+    mark(player, 'controls', CONFIG.restoreControls);
+    mark(player, 'red-progress', CONFIG.redProgress);
+    mark(player, 'autoplay', CONFIG.classicAutoplay);
+    mark(player, 'gradient', CONFIG.classicBottomGradient);
     const bottom = player.querySelector('.ytp-chrome-bottom');
-    if (!bottom) return;
-    if (!player.hasAttribute('data-oldyt-dom')) player.setAttribute('data-oldyt-dom', '');
+    if (!bottom || !CONFIG.restoreControls) return;
     const left = bottom.querySelector('.ytp-left-controls');
     const prev = left?.querySelector('.ytp-prev-button');
     const play = left?.querySelector('.ytp-play-button');
     if (prev && play && prev.nextElementSibling !== play) left.insertBefore(prev, play);
 
+    if (!CONFIG.classicControlIcons) return;
     const video = player.querySelector('video');
     const playing = video ? !video.paused && !video.ended : player.classList.contains('playing-mode');
     setIcon(play, player.classList.contains('ended-mode') ? 'replay' : playing ? 'pause' : 'play');
@@ -277,10 +484,12 @@
     const observer = new MutationObserver(records => {
       // Ignore progress/time updates; react to controls being rebuilt or state changing.
       if (records.some(r => r.type === 'attributes' ||
+        (r.type === 'characterData' && r.target.parentElement?.closest('.ytp-seek-overlay-duration')) ||
+        (r.type === 'childList' && r.target.matches?.('.ytp-seek-overlay-duration')) ||
         [...r.addedNodes, ...r.removedNodes].some(n => n.nodeType === 1))) schedule();
     });
-    observer.observe(player, { childList:true, subtree:true, attributes:true,
-      attributeFilter:['class', 'aria-valuenow', 'aria-pressed'] });
+    observer.observe(player, { childList:true, characterData:true, subtree:true, attributes:true,
+      attributeFilter:['class', 'aria-valuenow', 'aria-pressed', 'aria-label', 'd'] });
     const events = ['play', 'pause', 'ended', 'volumechange', 'loadedmetadata', 'emptied'];
     events.forEach(name => player.addEventListener(name, schedule, true));
     players.set(player, { observer, schedule, events });
